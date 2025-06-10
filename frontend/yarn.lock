@@ -611,10 +611,10 @@ has@^1.0.3:
   dependencies:
     function-bind "^1.1.1"
 
-highlight.js@11.8.0:
-  version "11.8.0"
-  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.8.0.tgz#966518ea83257bae2e7c9a48596231856555bb65"
-  integrity sha512-MedQhoqVdr0U6SSnWPzfiadUcDHfN/Wzq25AkXiQv9oiOO/sG0S7XkvpFIqWBl9Yq1UYyYOOVORs5UW2XlPyzg==
+highlight.js@11.11.1:
+  version "11.11.1"
+  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.11.1.tgz#fca06fa0e5aeecf6c4d437239135fabc15213585"
+  integrity sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w==
 
 immutable@^4.0.0:
   version "4.3.2"
@@ -1009,12 +1009,12 @@ svelte-check@^3.4.3:
     svelte-preprocess "^5.0.4"
     typescript "^5.0.3"
 
-svelte-highlight@^7.3.0:
-  version "7.3.0"
-  resolved "https://registry.yarnpkg.com/svelte-highlight/-/svelte-highlight-7.3.0.tgz#19de767583abc29eef783fde1c1460af65857acb"
-  integrity sha512-59oE9/xOFXAdT97qXIt6HMlzL2f+0YNQ+BArzRONwCW96ElxX7TGme1kU5s3tsk1D88G5dhBixcP1chOGOkVsg==
+svelte-highlight@^7.8.3:
+  version "7.8.3"
+  resolved "https://registry.yarnpkg.com/svelte-highlight/-/svelte-highlight-7.8.3.tgz#7aaed989047afe81f9f2883359cc21d4fdb8f144"
+  integrity sha512-i4CE/6yda1fCh0ovUVATk1S1feu1y3+CV+l1brgtMPPRO9VTGq+hPpUjVEJWQkE7hPAgwgVpHccoa5M2gpKxYQ==
   dependencies:
-    highlight.js "11.8.0"
+    highlight.js "11.11.1"
 
 svelte-hmr@^0.15.3:
   version "0.15.3"
