@@ -36,9 +36,9 @@ else
     fi
 fi
 
-./test/get_previous_releases.py -b
+./test/get_previous_releases.py
 
-time cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBerkeleyDB_INCLUDE_DIR:PATH="${BDB_PREFIX}/include" -DWITH_BDB=ON
+time cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 time cmake --build build -j$(nproc)
 
 if [ "$IS_MASTER" != "true" ]; then
