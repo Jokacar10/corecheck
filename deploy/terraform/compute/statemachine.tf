@@ -5,6 +5,7 @@ locals {
     "github-sync",
     "migrate",
     "handle-coverage",
+    "handle-coverage-failure",
     "handle-benchmarks",
     "handle-mutation",
     "rerun-all",
@@ -13,8 +14,8 @@ locals {
   # create a map of lambdas and their environment variables
   lambda_overrides = {
     "github-sync" = {
-      timeout     = 900
-      memory_size = 128
+      timeout                = 900
+      memory_size            = 128
       ephemeral_storage_size = 512
       environment = {
         variables = {
@@ -23,16 +24,17 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
 
-          GITHUB_ACCESS_TOKEN = var.github_token
-          STATE_MACHINE_ARN  = aws_sfn_state_machine.state_machine.arn
+          GITHUB_ACCESS_TOKEN        = var.github_token
+          STATE_MACHINE_ARN          = aws_sfn_state_machine.state_machine.arn
           MUTATION_STATE_MACHINE_ARN = aws_sfn_state_machine.mutation_state_machine.arn
         }
       }
     },
     "migrate" = {
-      timeout     = 60
-      memory_size = 128
+      timeout                = 60
+      memory_size            = 128
       ephemeral_storage_size = 512
       environment = {
         variables = {
@@ -41,13 +43,14 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
         }
       }
     },
     "handle-coverage" = {
-      timeout     = 300
-      memory_size = 512
-      ephemeral_storage_size = 512
+      timeout                = 900
+      memory_size            = 2048
+      ephemeral_storage_size = 2048
       environment = {
         variables = {
           DATABASE_HOST     = var.db_host
@@ -55,6 +58,7 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
 
           GITHUB_ACCESS_TOKEN = var.github_token
 
@@ -62,9 +66,9 @@ locals {
         }
       }
     },
-    "handle-benchmarks" = {
-      timeout     = 900
-      memory_size = 128
+    "handle-coverage-failure" = {
+      timeout                = 60
+      memory_size            = 128
       ephemeral_storage_size = 512
       environment = {
         variables = {
@@ -73,16 +77,34 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
+        }
+      }
+    },
+    "handle-benchmarks" = {
+      timeout                = 900
+      memory_size            = 128
+      ephemeral_storage_size = 512
+      environment = {
+        variables = {
+          DATABASE_HOST     = var.db_host
+          DATABASE_PORT     = var.db_port
+          DATABASE_USER     = var.db_user
+          DATABASE_PASSWORD = var.db_password
+          DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
 
-          BENCH_ARRAY_SIZE = local.bench_array_size
-          BUCKET_DATA_URL = var.corecheck_data_bucket_url
-          DD_API_KEY = var.datadog_api_key
+          BENCH_ARRAY_SIZE            = local.bench_array_size
+          BUCKET_DATA_URL             = var.corecheck_data_bucket_url
+          DD_API_KEY                  = var.datadog_api_key
+          BENCHMARK_RESULTS_LOG_GROUP = aws_cloudwatch_log_group.benchmark_results.name
+          TELEMETRY_CLOUDWATCH_REGION = data.aws_region.compute_region.name
         }
       }
     },
     "handle-mutation" = {
-      timeout     = 300
-      memory_size = 128
+      timeout                = 300
+      memory_size            = 128
       ephemeral_storage_size = 512
       environment = {
         variables = {
@@ -91,12 +113,13 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
         }
       }
     },
     "rerun-all" = {
-      timeout     = 900
-      memory_size = 128
+      timeout                = 900
+      memory_size            = 128
       ephemeral_storage_size = 512
       environment = {
         variables = {
@@ -105,21 +128,26 @@ locals {
           DATABASE_USER     = var.db_user
           DATABASE_PASSWORD = var.db_password
           DATABASE_NAME     = var.db_database
+          DATABASE_SSLMODE  = var.db_sslmode
 
-          BUCKET_DATA = var.corecheck_data_bucket
+          BUCKET_DATA        = var.corecheck_data_bucket
           BUCKET_DATA_REGION = var.corecheck_data_bucket_region
           STATE_MACHINE_ARN  = aws_sfn_state_machine.state_machine.arn
         }
       }
     },
     "stats" = {
-      timeout     = 900
-      memory_size = 1024
+      timeout                = 900
+      memory_size            = 2048
       ephemeral_storage_size = 10240
-      
+
       environment = {
         variables = {
-          DD_API_KEY = var.datadog_api_key
+          DD_API_KEY                     = var.datadog_api_key
+          GITHUB_EVENTS_LOG_GROUP        = aws_cloudwatch_log_group.github_events.name
+          GITHUB_EVENTS_LAST_RUN_PARAM   = aws_ssm_parameter.github_events_last_run.name
+          TELEMETRY_CLOUDWATCH_REGION    = data.aws_region.compute_region.name
+          TELEMETRY_CLOUDWATCH_NAMESPACE = terraform.workspace == "default" ? "Corecheck/prod" : "Corecheck/${terraform.workspace}"
         }
       }
     }
@@ -172,29 +200,26 @@ resource "aws_lambda_function" "function" {
 }
 
 
-resource "aws_lambda_invocation" "invoke" {
-  provider = aws.compute_region
-  function_name = "migrate-${terraform.workspace}"
-  input         = "{\"action\": \"up\"}"
+resource "aws_lambda_invocation" "run_migrations" {
+  provider      = aws.compute_region
+  function_name = aws_lambda_function.function["migrate"].function_name
+  input         = jsonencode({ action = "up" })
   triggers = {
     always_run = timestamp()
   }
-  depends_on = [
-    aws_lambda_function.function,
-  ]
 }
 
 resource "aws_cloudwatch_event_rule" "github_sync" {
-  provider = aws.compute_region
-  name        = "github-sync-rule-${terraform.workspace}"
-  description = "github-sync"
+  provider            = aws.compute_region
+  name                = "github-sync-rule-${terraform.workspace}"
+  description         = "github-sync"
   schedule_expression = "rate(10 minutes)"
-  is_enabled = terraform.workspace == "default"
+  is_enabled          = terraform.workspace == "default"
 }
 
 # target
 resource "aws_cloudwatch_event_target" "github_sync" {
-  provider = aws.compute_region
+  provider  = aws.compute_region
   rule      = aws_cloudwatch_event_rule.github_sync.name
   target_id = "github-sync-${terraform.workspace}"
   arn       = aws_lambda_function.function["github-sync"].arn
@@ -202,7 +227,7 @@ resource "aws_cloudwatch_event_target" "github_sync" {
 
 
 resource "aws_lambda_permission" "allow_eventbridge" {
-  provider = aws.compute_region
+  provider      = aws.compute_region
   statement_id  = "AllowExecutionFromEventBridge-${terraform.workspace}"
   action        = "lambda:InvokeFunction"
   function_name = "github-sync-${terraform.workspace}"
@@ -211,23 +236,23 @@ resource "aws_lambda_permission" "allow_eventbridge" {
 }
 
 resource "aws_cloudwatch_event_rule" "stats" {
-  provider = aws.compute_region
-  name        = "stats-rule-${terraform.workspace}"
-  description = "stats"
+  provider            = aws.compute_region
+  name                = "stats-rule-${terraform.workspace}"
+  description         = "stats"
   schedule_expression = "rate(1 hour)"
-  is_enabled = terraform.workspace == "default"
+  is_enabled          = terraform.workspace == "default"
 }
 
 # target
 resource "aws_cloudwatch_event_target" "stats" {
-  provider = aws.compute_region
+  provider  = aws.compute_region
   rule      = aws_cloudwatch_event_rule.stats.name
   target_id = "stats-${terraform.workspace}"
   arn       = aws_lambda_function.function["stats"].arn
 }
 
 resource "aws_lambda_permission" "allow_eventbridge_stats" {
-  provider = aws.compute_region
+  provider      = aws.compute_region
   statement_id  = "AllowExecutionFromEventBridgeStats-${terraform.workspace}"
   action        = "lambda:InvokeFunction"
   function_name = "stats-${terraform.workspace}"
@@ -330,18 +355,50 @@ resource "aws_sfn_state_machine" "state_machine" {
         "JobName": "coverage",
         "JobQueue": "${aws_batch_job_queue.coverage_queue.arn}"
       },
-      "Next": "Handle coverage",
-      "ResultPath": "$.coverage_job"
+      "ResultPath": "$.coverage_job",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.coverage_error",
+          "Next": "Handle coverage failure"
+        }
+      ],
+      "Next": "Handle coverage"
     },
     "Handle coverage": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "handle-coverage-${terraform.workspace}:$LATEST",
+        "Payload": {
+          "params.$": "$.params",
+          "coverage_job.$": "$.coverage_job",
+          "step_function_execution_arn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultPath": "$.coverage_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.coverage_error",
+          "Next": "Handle coverage failure"
+        }
+      ],
+      "Next": "Parallel"
+    },
+    "Handle coverage failure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "handle-coverage-failure-${terraform.workspace}:$LATEST",
         "Payload.$": "$"
       },
-      "Next": "Parallel",
-      "ResultPath": "$.coverage_result"
+      "ResultPath": "$.coverage_failure_result",
+      "Next": "Coverage failed"
+    },
+    "Coverage failed": {
+      "Type": "Fail",
+      "Cause": "Coverage report generation failed"
     },
     "Parallel": {
       "Type": "Parallel",

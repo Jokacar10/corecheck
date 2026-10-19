@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -8,7 +8,10 @@ RUN apt-get update && apt-get install -y git \
     libboost-dev \
     libsqlite3-dev \
     libzmq3-dev \
-    lcov \
+    libcapnp-dev \
+    capnproto \
+    clang \
+    llvm \
     build-essential \
     libtool \
     cmake \
@@ -18,6 +21,7 @@ RUN apt-get update && apt-get install -y git \
     curl \
     wget \
     python3-pip \
+    python3-dev \
     lsb-release \
     software-properties-common \
     gnupg \
@@ -25,7 +29,8 @@ RUN apt-get update && apt-get install -y git \
     jq \
     parallel
 
-RUN pip install gcovr --break-system-packages
+RUN pip3 install --break-system-packages pycapnp
+
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \
@@ -51,12 +56,12 @@ RUN apt update && apt install -y datadog-agent datadog-signing-keys
 RUN git clone https://github.com/bitcoin/bitcoin.git /tmp/bitcoin
 WORKDIR /tmp/bitcoin
 
-RUN make -C depends NO_BOOST=1 NO_LIBEVENT=1 NO_QT=1 NO_SQLITE=1 NO_ZMQ=1 NO_USDT=1 -j$(nproc)
-
-RUN mkdir -p /tmp/bitcoin/releases && ./test/get_previous_releases.py -b
+RUN mkdir -p /tmp/bitcoin/releases && ./test/get_previous_releases.py
 
 RUN git config --global user.email "ci@corecheck.dev"
 RUN git config --global user.name "corecheck"
+
+COPY convert_lcov_to_gcovr.py /convert_lcov_to_gcovr.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

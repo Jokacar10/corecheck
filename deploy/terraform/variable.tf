@@ -7,7 +7,9 @@ variable "db_password" {}
 variable "db_database" {
   default = "corecheck"
 }
-variable "ssh_pubkey" {}
+variable "db_sslmode" {
+  default = "require"
+}
 
 variable "dns_name" {
   default = "corecheck.dev"
@@ -15,3 +17,21 @@ variable "dns_name" {
 
 variable "github_token" {}
 variable "datadog_api_key" {}
+
+variable "alert_email" {
+  description = "Email address to receive CloudWatch alert notifications"
+  type        = string
+}
+
+variable "telegram_bot_token" {
+  description = "Telegram bot token for alert notifications. Leave empty to disable."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "telegram_chat_id" {
+  description = "Telegram chat ID to send alert notifications to."
+  type        = string
+  default     = ""
+}

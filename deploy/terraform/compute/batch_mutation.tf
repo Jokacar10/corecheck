@@ -1,3 +1,16 @@
+resource "aws_launch_template" "mutation_compute" {
+  provider    = aws.compute_region
+  name_prefix = "mutation-${terraform.workspace}-"
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size = 60
+    }
+  }
+}
+
 resource "aws_batch_compute_environment" "mutation_compute" {
   provider                        = aws.compute_region
   compute_environment_name_prefix = "mutation-${terraform.workspace}-"
@@ -12,9 +25,13 @@ resource "aws_batch_compute_environment" "mutation_compute" {
       data.aws_subnets.batch_subnets.ids[2],
     ]
 
-    type                = "EC2"
-    instance_role       = aws_iam_instance_profile.ecs_instance_role.arn
-    instance_type       = ["c7g.2xlarge"]
+    type          = "EC2"
+    instance_role = aws_iam_instance_profile.ecs_instance_role.arn
+    instance_type = ["c7g.2xlarge"]
+    launch_template {
+      launch_template_id = aws_launch_template.mutation_compute.id
+      version            = "$Latest"
+    }
   }
   lifecycle {
     create_before_destroy = true
@@ -105,6 +122,6 @@ resource "aws_batch_job_definition" "mutation_job" {
     jobRoleArn       = aws_iam_role.job_role.arn
   })
   timeout {
-    attempt_duration_seconds = 129600 # 36 hours - mutation job at time of writing takes ~24 hours
+    attempt_duration_seconds = 172800 # 48 hours - mutation job at time of writing takes ~38 hours
   }
 }

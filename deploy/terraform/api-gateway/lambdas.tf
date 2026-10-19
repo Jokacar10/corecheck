@@ -1,11 +1,16 @@
 locals {
   api_lambdas = [
+    "get-master-coverage",
     "get-pull",
     "list-pulls",
     "get-report",
     "get-mutation",
     "datadog-proxy",
   ]
+
+  api_lambda_memory_size = {
+    "get-report" = 1024
+  }
 }
 
 data "aws_s3_object" "lambda_api_zip" {
@@ -19,9 +24,9 @@ resource "aws_lambda_function" "lambda" {
   function_name = "${each.value}-${terraform.workspace}"
   handler       = each.value
   role          = aws_iam_role.lambda.arn
-  memory_size   = 128
+  memory_size   = lookup(local.api_lambda_memory_size, each.value, 128)
   architectures = ["arm64"]
-  timeout       = 30
+  timeout       = 120
 
   s3_key            = data.aws_s3_object.lambda_api_zip[each.value].key
   s3_object_version = data.aws_s3_object.lambda_api_zip[each.value].version_id
@@ -33,6 +38,7 @@ resource "aws_lambda_function" "lambda" {
       DATABASE_USER     = var.db_user
       DATABASE_PASSWORD = var.db_password
       DATABASE_NAME     = var.db_database
+      DATABASE_SSLMODE  = var.db_sslmode
       BUCKET_DATA_URL   = var.corecheck_data_bucket_url
     }
   }

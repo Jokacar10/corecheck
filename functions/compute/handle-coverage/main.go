@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/corecheck/corecheck/internal/config"
@@ -22,6 +23,8 @@ var (
 
 func handleCodeCoverageSuccess(job *types.JobParams) error {
 	log.Info("Handling code coverage success")
+	stepFunctionExecutionARN := job.GetStepFunctionExecutionARN()
+	coverageBatchJobID := job.GetCoverageBatchJobID()
 
 	if job.GetIsMaster() {
 		report, err := db.GetOrCreateCoverageReportByCommitMaster(job.Commit)
@@ -30,9 +33,21 @@ func handleCodeCoverageSuccess(job *types.JobParams) error {
 			return err
 		}
 
+		err = db.UpdateCoverageReportTrace(report.ID, stepFunctionExecutionARN, coverageBatchJobID)
+		if err != nil {
+			log.Error("Error updating coverage report trace", err)
+			return err
+		}
+
 		err = db.UpdateCoverageReport(report.ID, db.COVERAGE_REPORT_STATUS_SUCCESS, report.BenchmarkStatus, report.BaseCommit)
 		if err != nil {
 			log.Error("Error updating coverage report", err)
+			return err
+		}
+
+		err = db.UpdateCoverageReportGeneratedAt(report.ID, time.Now().UTC())
+		if err != nil {
+			log.Error("Error setting coverage report generation time", err)
 			return err
 		}
 
@@ -43,6 +58,12 @@ func handleCodeCoverageSuccess(job *types.JobParams) error {
 	report, err := db.GetOrCreateCoverageReportByCommitPr(job.Commit, job.GetPRNumber(), job.BaseCommit)
 	if err != nil {
 		log.Error("Error getting coverage report", err)
+		return err
+	}
+
+	err = db.UpdateCoverageReportTrace(report.ID, stepFunctionExecutionARN, coverageBatchJobID)
+	if err != nil {
+		log.Error("Error updating coverage report trace", err)
 		return err
 	}
 
@@ -57,13 +78,17 @@ func handleCodeCoverageSuccess(job *types.JobParams) error {
 		return err
 	}
 
+	log.Debug("Getting master coverage data")
 	coverageMaster, err := GetCoverageDataMaster(job.BaseCommit)
 	if err != nil {
 		log.Error("Error getting master coverage data", err)
 		return err
 	}
 
+	log.Debug("Getting differential coverage")
 	differentialCoverage := coverage.Diff(coverageMaster, diff)
+
+	log.Debug("Creating hunks")
 	hunks := differentialCoverage.CreateHunks(report)
 
 	log.Info(fmt.Sprintf("Found %d hunks", len(hunks)))
@@ -77,6 +102,12 @@ func handleCodeCoverageSuccess(job *types.JobParams) error {
 	log.Debugf("Updating coverage data for PR %d", job.PRNumber)
 	err = db.UpdateCoverageReport(report.ID, report.Status, report.BenchmarkStatus, report.BaseCommit)
 	if err != nil {
+		return err
+	}
+
+	err = db.UpdateCoverageReportGeneratedAt(report.ID, time.Now().UTC())
+	if err != nil {
+		log.Error("Error setting coverage report generation time", err)
 		return err
 	}
 
