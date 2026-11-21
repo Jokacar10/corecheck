@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y git \
     libzmq3-dev \
     libcapnp-dev \
     capnproto \
-    lcov \
+    clang \
+    llvm \
     build-essential \
     libtool \
     cmake \
@@ -20,6 +21,7 @@ RUN apt-get update && apt-get install -y git \
     curl \
     wget \
     python3-pip \
+    python3-dev \
     lsb-release \
     software-properties-common \
     gnupg \
@@ -27,7 +29,8 @@ RUN apt-get update && apt-get install -y git \
     jq \
     parallel
 
-RUN pip install gcovr --break-system-packages
+RUN pip3 install --break-system-packages pycapnp
+
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \
@@ -57,6 +60,8 @@ RUN mkdir -p /tmp/bitcoin/releases && ./test/get_previous_releases.py
 
 RUN git config --global user.email "ci@corecheck.dev"
 RUN git config --global user.name "corecheck"
+
+COPY convert_lcov_to_gcovr.py /convert_lcov_to_gcovr.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

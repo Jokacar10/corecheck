@@ -23,6 +23,11 @@ variable "db_database" {
   description = "db database"
 }
 
+variable "db_sslmode" {
+  type        = string
+  description = "db ssl mode"
+}
+
 variable "github_token" {
   type        = string
   description = "github token"
@@ -48,21 +53,27 @@ variable "aws_access_key_id" {
 }
 
 variable "aws_secret_access_key" {
-    type        = string
-    description = "aws secret access key"
+  type        = string
+  description = "aws secret access key"
 }
 
 variable "sonar_token" {
-    type        = string
-    description = "sonar token"
+  type        = string
+  description = "sonar token"
 }
 
 variable "lambda_bucket" {
-    type        = string
-    description = "lambda bucket"
+  type        = string
+  description = "lambda bucket"
 }
 
 variable "datadog_api_key" {
-    type        = string
-    description = "datadog api key"
+  type        = string
+  description = "datadog api key"
+}
+
+variable "github_events_log_retention_days" {
+  type        = number
+  description = "Retention in days for the GitHub events CloudWatch Logs log group"
+  default     = 731
 }

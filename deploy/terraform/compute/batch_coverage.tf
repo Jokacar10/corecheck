@@ -97,8 +97,16 @@ resource "aws_batch_job_definition" "coverage_job" {
         value = aws_s3_bucket.corecheck-artifacts.id
       },
       {
-        name = "DD_API_KEY",
+        name  = "DD_API_KEY",
         value = var.datadog_api_key
+      },
+      {
+        name  = "TEST_RESULTS_LOG_GROUP",
+        value = aws_cloudwatch_log_group.test_results.name
+      },
+      {
+        name  = "TELEMETRY_CLOUDWATCH_REGION",
+        value = data.aws_region.compute_region.name
       }
     ]
 
