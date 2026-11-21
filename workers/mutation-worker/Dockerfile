@@ -3,29 +3,32 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
-git \
-python3-zmq \
-libevent-dev \
-libboost-dev \
-libsqlite3-dev \
-libzmq3-dev \
-build-essential \
-libtool \
-cmake \
-pkg-config \
-bsdmainutils \
-bsdextrautils \
-curl \
-wget \
-python3-pip \
-lsb-release \
-software-properties-common \
-gnupg \
-unzip \
-jq \
-parallel
+    git \
+    python3-zmq \
+    libevent-dev \
+    libboost-dev \
+    libsqlite3-dev \
+    libzmq3-dev \
+    libcapnp-dev \
+    capnproto \
+    build-essential \
+    libtool \
+    cmake \
+    pkg-config \
+    bsdmainutils \
+    bsdextrautils \
+    curl \
+    wget \
+    python3-pip \
+    lsb-release \
+    software-properties-common \
+    gnupg \
+    unzip \
+    jq \
+    parallel
 
-RUN pip install mutation-core --break-system-packages
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
@@ -42,8 +45,6 @@ RUN ln -s /usr/bin/sccache /usr/bin/ccache
 RUN git clone https://github.com/bitcoin/bitcoin.git /tmp/bitcoin
 RUN git clone --depth=1 https://github.com/bitcoin-core/qa-assets.git /tmp/bitcoin/qa-assets
 WORKDIR /tmp/bitcoin
-
-RUN make -C depends NO_BOOST=1 NO_LIBEVENT=1 NO_QT=1 NO_SQLITE=1 NO_ZMQ=1 NO_USDT=1 -j$(nproc)
 
 RUN mkdir -p /tmp/bitcoin/releases && ./test/get_previous_releases.py
 
