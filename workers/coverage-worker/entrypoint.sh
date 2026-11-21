@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 COMMIT=$1
 PR_NUM=$2
@@ -24,34 +24,67 @@ if [ "$IS_MASTER" != "true" ]; then
         echo "Commit $COMMIT is not equal to HEAD commit $HEAD_COMMIT"
         exit 1
     fi
-    
-    git rebase $BASE_COMMIT
+
+    PR_MERGE_BASE=$(git merge-base HEAD origin/master)
+    git rebase --onto "$BASE_COMMIT" "$PR_MERGE_BASE"
     S3_COVERAGE_FILE=s3://$S3_BUCKET_DATA/$PR_NUM/$HEAD_COMMIT/coverage.json
     S3_BENCH_FILE=s3://$S3_BUCKET_ARTIFACTS/$PR_NUM/$HEAD_COMMIT/bench_bitcoin
     S3_SRC_PATH=s3://$S3_BUCKET_DATA/$PR_NUM/$HEAD_COMMIT/src
+    S3_COVERAGE_HTML_REPORT_PREFIX=
+    S3_COVERAGE_HTML_REPORT_INDEX=
 else
-   git checkout $COMMIT
+    git checkout $COMMIT
     S3_COVERAGE_FILE=s3://$S3_BUCKET_DATA/master/$COMMIT/coverage.json
     S3_BENCH_FILE=s3://$S3_BUCKET_ARTIFACTS/master/$COMMIT/bench_bitcoin
     S3_SRC_PATH=s3://$S3_BUCKET_DATA/master/$COMMIT/src
+    S3_COVERAGE_HTML_REPORT_PREFIX=s3://$S3_BUCKET_DATA/master/$COMMIT/coverage-report
+    S3_COVERAGE_HTML_REPORT_INDEX=$S3_COVERAGE_HTML_REPORT_PREFIX/index.html
 fi
 
 set +e
 coverage_exists=$(aws s3 ls $S3_COVERAGE_FILE)
 set -e
 
-if [ "$coverage_exists" != "" ]; then
+master_html_exists=""
+if [ "$IS_MASTER" == "true" ]; then
+    set +e
+    master_html_exists=$(aws s3 ls $S3_COVERAGE_HTML_REPORT_INDEX)
+    set -e
+fi
+
+if [ "$coverage_exists" != "" ] && { [ "$IS_MASTER" != "true" ] || [ "$master_html_exists" != "" ]; }; then
     echo "Coverage data already exists for this commit"
 else
+    if [ "$coverage_exists" != "" ] && [ "$IS_MASTER" == "true" ]; then
+        echo "Coverage JSON exists but HTML report is missing; regenerating master coverage artifacts"
+    fi
+
     ./test/get_previous_releases.py
-    
+
+    DIR_UNIT_TEST_DATA="$PWD/qa-assets/unit_test_data"
+    mkdir -p "$DIR_UNIT_TEST_DATA"
+    curl --location --fail https://github.com/bitcoin-core/qa-assets/raw/main/unit_test_data/script_assets_test.json -o "$DIR_UNIT_TEST_DATA/script_assets_test.json"
+    export DIR_UNIT_TEST_DATA
+
     NPROC_2=$(expr $(nproc) \* 2)
-    
-    time cmake -B build -DCMAKE_BUILD_TYPE=Coverage
+
+    time cmake -B build -DCMAKE_C_COMPILER="clang" \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_CXX_COMPILER="clang++" \
+        -DAPPEND_CFLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+        -DAPPEND_CXXFLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+        -DAPPEND_LDFLAGS="-fprofile-instr-generate -fcoverage-mapping"
     time cmake --build build -j$(nproc)
-    
-    time ./build/bin/test_bitcoin --list_content 2>&1 | grep -v "    " | parallel --halt now,fail=1 ./build/bin/test_bitcoin -t {} 2>&1
-    time python3 ./build/test/functional/test_runner.py -F --previous-releases --timeout-factor=10 --exclude=feature_reindex_readonly,feature_dbcrash -j$NPROC_2 &> functional-tests.log
+
+    # Create directory for raw profile data
+    mkdir -p build/raw_profile_data
+    export LLVM_PROFILE_FILE="$(pwd)/build/raw_profile_data/%m_%p.profraw"
+
+    # Run tests to generate profiles
+    time ctest --test-dir build -j $(nproc) | tee unit-tests.log
+
+    time python3 ./build/test/functional/test_runner.py -F --previous-releases --timeout-factor=10 \
+        --exclude=feature_reindex_readonly -j$(nproc) 2>&1 | tee functional-tests.log
     
     if [ "$IS_MASTER" == "true" ]; then
         binary_size=$(stat -c %s ./build/bin/bitcoind)
@@ -66,9 +99,24 @@ else
         done < "functional-tests.log"
     fi
     
-    time gcovr --json --merge-mode-functions=merge-use-line-min --gcov-ignore-errors=no_working_dir_found --gcov-ignore-parse-errors -e depends -e src/test -e src/leveldb -e src/bench -e src/qt -j $(nproc) > coverage.json
+    # Merge all the raw profile data into a single file
+    find build/raw_profile_data -name "*.profraw" > build/profraw_files.txt
+    llvm-profdata merge -f build/profraw_files.txt -o build/coverage.profdata
+
+    # lcov is probably the simplest format to later convert to gcovr json format
+    # sticking with gcovr json format even though gcc and lcov and gcovr are not used any more as it's human readable and the rest of the app processes it
+    # future work could be to just use llvm-cov output formats natively
+    time llvm-cov export --format=lcov --object=build/bin/test_bitcoin --object=build/bin/bitcoind --instr-profile=build/coverage.profdata --ignore-filename-regex="src/crc32c/|src/leveldb/|src/minisketch/|src/secp256k1/|src/test/" -Xdemangler=llvm-cxxfilt > build/coverage.info
     
+    python3 /convert_lcov_to_gcovr.py build/coverage.info coverage.json
+
     aws s3 cp coverage.json $S3_COVERAGE_FILE
+
+    if [ "$IS_MASTER" == "true" ]; then
+        rm -rf build/coverage-html
+        time llvm-cov show build/bin/test_bitcoin --object=build/bin/bitcoind --instr-profile=build/coverage.profdata --ignore-filename-regex="src/crc32c/|src/leveldb/|src/minisketch/|src/secp256k1/|src/test/" -Xdemangler=llvm-cxxfilt --format=html --output-dir=build/coverage-html
+        aws s3 sync --delete build/coverage-html $S3_COVERAGE_HTML_REPORT_PREFIX
+    fi
 fi
 
 set +e
@@ -103,7 +151,7 @@ if [ "$IS_MASTER" != "true" ]; then
     set -e
     
     if [ "$diff_exists" == "" ]; then
-        git diff $BASE_COMMIT > diff.patch
+        git diff "$BASE_COMMIT" HEAD > diff.patch
         aws s3 cp diff.patch s3://$S3_BUCKET_DATA/$PR_NUM/$HEAD_COMMIT/diff.patch
     fi
 fi
