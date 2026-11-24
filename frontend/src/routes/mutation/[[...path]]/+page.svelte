@@ -1,5 +1,7 @@
 <script>
   import { onMount } from "svelte";
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public'
   let selectedFile = '';
   let fileContent = '';
@@ -13,7 +15,30 @@
   let mutations = [];
   let countMutations = 0;
 
-  onMount(async () => {
+  onMount(() => {
+    const unsubscribe = page.subscribe(($page) => {
+      const pathname = $page.url.pathname;
+
+      if (pathname === '/mutation' || pathname === '/mutation/') {
+        selectedFile = '';
+        return;
+      }
+
+      if (pathname.startsWith('/mutation/')) {
+        const filePath = pathname.slice('/mutation/'.length);
+
+        if (fileExists(filePath)) {
+          if (selectedFile !== filePath) {
+            handleFileSelect(filePath, false);
+          }
+        } else {
+          console.warn(`File not found: ${filePath}`);
+          goto('/mutation', { replaceState: true });
+        }
+      }
+    });
+
+    const loadMutations = async () => {
       try {
           const response = await fetch(env.PUBLIC_ENDPOINT + '/mutations/meta');
           mutationsMeta = await response.json();
@@ -35,6 +60,14 @@
       }
 
       countMutations = countDiffs(mutations);
+
+      if (selectedFile) {
+        setMutationData(selectedFile);
+      }
+    };
+
+    loadMutations();
+    return unsubscribe;
   });
 
 
@@ -59,17 +92,40 @@
     },
   };
 
-  async function handleFileSelect(file) {
-    selectedFile = file;
-    try {
-      console.log(file);
-      const selected_mutations = mutations.filter(val => val.filename.includes(file));
+  function fileExists(filePath) {
+    const parts = filePath.split('/');
+    let current = files;
 
-      if(selected_mutations.length > 0 && 'diffs' in selected_mutations[0]) {
-        mutationData = selected_mutations[0].diffs || {};
+    for (const part of parts) {
+      if (current && typeof current === 'object' && part in current) {
+        current = current[part];
       } else {
-        mutationData = {};
+        return false;
       }
+    }
+
+    return typeof current === 'string';
+  }
+
+  function setMutationData(file) {
+    const selected_mutations = mutations.filter(val => val.filename.includes(file));
+
+    if(selected_mutations.length > 0 && 'diffs' in selected_mutations[0]) {
+      mutationData = selected_mutations[0].diffs || {};
+    } else {
+      mutationData = {};
+    }
+  }
+
+  async function handleFileSelect(file, updateUrl = true) {
+    selectedFile = file;
+
+    if (updateUrl) {
+      goto(`/mutation/${file}`, { replaceState: false });
+    }
+
+    try {
+      setMutationData(file);
 
       // Fetch file content from GitHub raw URL
       const githubPath = `${GITHUB_RAW_BASE}/${file}`;
@@ -230,7 +286,7 @@
       <div class="">
         <div class="shadow document" style="">
           <div class="heading" style="">
-            <h2 class="">{selectedFile}</h2>
+            <h2 class=""><a on:click={() => goto('/mutation', { replaceState: true })} style="text-decoration: underline;">Mutations</a> -> {selectedFile}</h2>
           </div>
 
           <div class="main-content code-container">
