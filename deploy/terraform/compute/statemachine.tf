@@ -200,14 +200,14 @@ resource "aws_lambda_function" "function" {
 }
 
 
-resource "aws_lambda_invocation" "run_migrations" {
-  provider      = aws.compute_region
-  function_name = aws_lambda_function.function["migrate"].function_name
-  input         = jsonencode({ action = "up" })
-  triggers = {
-    always_run = timestamp()
-  }
-}
+# resource "aws_lambda_invocation" "run_migrations" {
+#   provider      = aws.compute_region
+#   function_name = aws_lambda_function.function["migrate"].function_name
+#   input         = jsonencode({ action = "up" })
+#   triggers = {
+#     always_run = timestamp()
+#   }
+# }
 
 resource "aws_cloudwatch_event_rule" "github_sync" {
   provider            = aws.compute_region
