@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "5.15.0"
+      version = "5.90.0"
     }
   }
 
@@ -15,7 +15,6 @@ terraform {
 }
 
 provider "aws" {
-  alias  = "default"
   region = "eu-west-3"
 }
 
@@ -29,19 +28,9 @@ data "aws_region" "compute_region" {
 }
 
 data "aws_region" "default" {
-  provider = aws.default
 }
 
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
 }
-
-resource "local_file" "hosts" {
-  content  = <<EOF
-db ansible_host=${aws_instance.db.public_ip} ansible_ssh_user=ubuntu 
-EOF
-  filename = "../ansible/hosts.ini"
-
-}
-

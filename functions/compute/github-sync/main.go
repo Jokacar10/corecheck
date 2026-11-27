@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/sfn"
 	"golang.org/x/oauth2"
+	"gorm.io/gorm"
 )
 
 var (
@@ -29,6 +31,39 @@ type StateMachineInput struct {
 	Params types.JobParams `json:"params"`
 }
 
+func startMasterCoverageExecution(report *db.CoverageReport, commit string) error {
+	params := StateMachineInput{
+		Params: types.JobParams{
+			Commit:     commit,
+			IsMaster:   "true",
+			PRNumber:   "0",
+			BaseCommit: commit,
+		},
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+
+	execution, err := stateMachine.StartExecution(&sfn.StartExecutionInput{
+		StateMachineArn: aws.String(cfg.StateMachineARN),
+		Input:           aws.String(string(paramsJSON)),
+	})
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+
+	err = db.UpdateCoverageReportTrace(report.ID, aws.StringValue(execution.ExecutionArn), "")
+	if err != nil {
+		log.Errorf("Error updating coverage report trace: %s", err)
+		return err
+	}
+
+	return nil
+}
+
 func checkMasterCoverage(c *github.Client) error {
 	log.Info("Checking master coverage...")
 	master, _, err := c.Repositories.GetBranch(context.Background(), "bitcoin", "bitcoin", "master", 0)
@@ -39,23 +74,32 @@ func checkMasterCoverage(c *github.Client) error {
 
 	log.Debug("Latest commit: %s", master.GetCommit().GetSHA())
 
-	hasReport, err := db.HasCoverageReportForCommit(master.GetCommit().GetSHA())
-	if err != nil {
+	commit := master.GetCommit().GetSHA()
+	report, err := db.GetCoverageReportByCommitMaster(commit)
+	if err == nil {
+		if report.Status == db.COVERAGE_REPORT_STATUS_PENDING {
+			log.Info("Master coverage is already pending for latest commit")
+			return nil
+		}
+		if report.GeneratedAt != nil {
+			log.Info("Master has coverage for latest commit")
+			return nil
+		}
+
+		log.Info("Master coverage exists but the HTML report is missing, re-running coverage")
+		return startMasterCoverageExecution(report, commit)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		log.Error(err)
 		return err
 	}
 
-	if hasReport {
-		log.Info("Master has coverage for latest commit")
-		return nil
-	}
-
 	log.Info("Master does not have coverage for latest commit, adding to queue")
 
-	report := &db.CoverageReport{
-		Commit:     master.GetCommit().GetSHA(),
+	report = &db.CoverageReport{
+		Commit:     commit,
 		IsMaster:   true,
-		BaseCommit: master.GetCommit().GetSHA(),
+		BaseCommit: commit,
 	}
 
 	err = db.CreateCoverageReport(report)
@@ -64,23 +108,10 @@ func checkMasterCoverage(c *github.Client) error {
 		return err
 	}
 
-	params := StateMachineInput{
-		Params: types.JobParams{
-			Commit:     master.GetCommit().GetSHA(),
-			IsMaster:   "true",
-			PRNumber:   "0",
-			BaseCommit: master.GetCommit().GetSHA(),
-		},
-	}
-	paramsJson, err := json.Marshal(params)
+	err = startMasterCoverageExecution(report, commit)
 	if err != nil {
-		log.Error(err)
 		return err
 	}
-	_, err = stateMachine.StartExecution(&sfn.StartExecutionInput{
-		StateMachineArn: aws.String(cfg.StateMachineARN),
-		Input:           aws.String(string(paramsJson)),
-	})
 
 	err, runMutations := isTimeToRunMutationsAgain()
 	if err != nil {
@@ -91,15 +122,29 @@ func checkMasterCoverage(c *github.Client) error {
 	if runMutations {
 		log.Info("Time to run mutations again")
 
+		params := StateMachineInput{
+			Params: types.JobParams{
+				Commit:     commit,
+				IsMaster:   "true",
+				PRNumber:   "0",
+				BaseCommit: commit,
+			},
+		}
+		paramsJSON, err := json.Marshal(params)
+		if err != nil {
+			log.Error(err)
+			return err
+		}
+
 		_, err = stateMachine.StartExecution(&sfn.StartExecutionInput{
 			StateMachineArn: aws.String(cfg.MutationMachineARN),
-			Input:           aws.String(string(paramsJson)),
+			Input:           aws.String(string(paramsJSON)),
 		})
 		if err != nil {
 			log.Error(err)
 			return err
 		}
-		err = createPendingMutationResult(params.Params.Commit)
+		err = createPendingMutationResult(commit)
 		if err != nil {
 			log.Error(err)
 			return err
@@ -128,6 +173,10 @@ func createPendingMutationResult(commit string) error {
 func isTimeToRunMutationsAgain() (error, bool) {
 	result, err := db.GetLatestMutationResult()
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Info("No mutation results found, running initial mutation job")
+			return nil, true
+		}
 		log.Error(err)
 		return err, false
 	}
@@ -160,7 +209,7 @@ func handlePullRequest(pr *github.PullRequest) error {
 	}
 
 	if pr.GetState() == "open" {
-		hasReport, err := db.HasCoverageReportForCommit(dbPR.Head)
+		hasReport, err := db.HasCoverageReportForCommitPR(dbPR.Head, dbPR.Number)
 		if err != nil {
 			log.Error(err)
 			return err
@@ -175,6 +224,10 @@ func handlePullRequest(pr *github.PullRequest) error {
 
 		masterReport, err := db.GetLatestMasterCoverageReport()
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Infof("Skipping coverage job for PR %d until master coverage is available", dbPR.Number)
+				return nil
+			}
 			log.Error(err)
 			return err
 		}
@@ -205,13 +258,18 @@ func handlePullRequest(pr *github.PullRequest) error {
 			return err
 		}
 
-		_, err = stateMachine.StartExecution(&sfn.StartExecutionInput{
+		execution, err := stateMachine.StartExecution(&sfn.StartExecutionInput{
 			StateMachineArn: aws.String(cfg.StateMachineARN),
 			Input:           aws.String(string(paramsJson)),
 		})
-
 		if err != nil {
 			log.Error(err)
+			return err
+		}
+
+		err = db.UpdateCoverageReportTrace(report.ID, aws.StringValue(execution.ExecutionArn), "")
+		if err != nil {
+			log.Errorf("Error updating coverage report trace: %s", err)
 			return err
 		}
 	}
@@ -234,7 +292,7 @@ mainLoop:
 	for {
 		log.Debugf("Retrieving page %d", page)
 		prs, _, err := c.PullRequests.List(context.Background(), "bitcoin", "bitcoin", &github.PullRequestListOptions{
-			State:     "open",
+			State:     "all",
 			Sort:      "updated",
 			Direction: "desc",
 			ListOptions: github.ListOptions{

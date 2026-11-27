@@ -15,15 +15,52 @@
     let { pr, sonarcloud, report } = data;
     console.log(report);
 
-    let selectedReport = pr.reports[0];
+    let selectedReport = pr.reports?.[0];
     let prev = selectedReport;
 
     let fetching = false;
+    let showDebugInfo = false;
+    const fallbackAwsRegion = "ap-south-1";
+
+    function getReportFailureReason(report: { failure_reason?: string } | null | undefined) {
+        return (
+            report?.failure_reason?.trim() ||
+            "The coverage workflow failed for an unknown reason."
+        );
+    }
+
+    function getAwsRegionFromExecutionArn(executionArn?: string | null) {
+        if (!executionArn) return "";
+
+        const arnParts = executionArn.split(":");
+        return arnParts.length > 3 ? arnParts[3] : "";
+    }
+
+    function getStepFunctionsExecutionUrl(executionArn?: string | null) {
+        const region = getAwsRegionFromExecutionArn(executionArn);
+        if (!executionArn || !region) return "";
+
+        return `https://console.aws.amazon.com/states/home?region=${encodeURIComponent(
+            region,
+        )}#/executions/details/${executionArn}`;
+    }
+
+    function getBatchJobUrl(jobId?: string | null, executionArn?: string | null) {
+        if (!jobId) return "";
+
+        const region = getAwsRegionFromExecutionArn(executionArn) || fallbackAwsRegion;
+        if (!region) return "";
+
+        return `https://console.aws.amazon.com/batch/home?region=${encodeURIComponent(
+            region,
+        )}#jobs/detail/${jobId}`;
+    }
 
     $: {
         (async () => {
-            if (selectedReport.id !== prev.id) {
+            if (selectedReport && selectedReport.id !== prev?.id) {
                 prev = selectedReport;
+                showDebugInfo = false;
                 fetching = true;
                 report = await _fetchReport(
                     fetch,
@@ -84,6 +121,23 @@
                     optionComponent={CoverageReportSelectOption}
                 />
             </Field>
+            {#if report?.base_commit}
+                <div class="report-meta">
+                    <span class="report-meta-label">Base master commit</span>
+                    <a
+                        class="label label-sm link-primary txt-mono"
+                        href={"https://github.com/bitcoin/bitcoin/commit/" +
+                            report.base_commit}
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        {report.base_commit.substring(0, 7)}
+                    </a>
+                    <span class="report-meta-description">
+                        used for coverage and benchmarks
+                    </span>
+                </div>
+            {/if}
         </div>
         <div class="clearfix m-b-base" />
 
@@ -105,8 +159,8 @@
             {/if}
             {#if report && report.status === "failure"}
                 <div class="alert alert-danger" style="text-align: center">
-                    <i class="ri-information-line" /> An error occured while generating
-                    the coverage report.
+                    <i class="ri-information-line" /> Failed to generate report:
+                    {getReportFailureReason(report)}
                 </div>
             {/if}
             {#if report && report.status === "success"}
@@ -195,6 +249,165 @@
                 </div>
             {/if}
         {/if}
+        {#if report}
+            <div class="debug-info-footer">
+                <button
+                    class="debug-info-toggle link-primary txt-xs"
+                    type="button"
+                    aria-controls="report-debug-trace"
+                    aria-expanded={showDebugInfo}
+                    on:click={() => (showDebugInfo = !showDebugInfo)}
+                >
+                    {showDebugInfo ? "Hide debug info" : "Debug info"}
+                </button>
+                <div
+                    id="report-debug-trace"
+                    class="debug-info-panel"
+                    hidden={!showDebugInfo}
+                    aria-hidden={!showDebugInfo}
+                    data-report-id={report.id}
+                    data-report-commit={report.commit}
+                    data-step-function-execution-arn={report.step_function_execution_arn ||
+                        ""}
+                    data-coverage-batch-job-id={report.coverage_batch_job_id || ""}
+                    data-base-report-id={report.base_report?.id || ""}
+                    data-base-report-commit={report.base_report?.commit || report.base_commit || ""}
+                    data-base-step-function-execution-arn={report.base_report
+                        ?.step_function_execution_arn || ""}
+                    data-base-coverage-batch-job-id={report.base_report
+                        ?.coverage_batch_job_id || ""}
+                >
+                    <div class="debug-info-section">
+                        <div class="debug-info-section-title">Pull request run</div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Report ID</span>
+                            <code class="debug-info-value txt-mono">{report.id}</code>
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Commit</span>
+                            <code class="debug-info-value txt-mono">{report.commit}</code>
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label"
+                                >Step Functions execution ARN</span
+                            >
+                            <code class="debug-info-value txt-mono">
+                                {#if getStepFunctionsExecutionUrl(
+                                    report.step_function_execution_arn,
+                                )}
+                                    <a
+                                        class="debug-info-link link-primary txt-mono"
+                                        href={getStepFunctionsExecutionUrl(
+                                            report.step_function_execution_arn,
+                                        )}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        {report.step_function_execution_arn}
+                                    </a>
+                                {:else}
+                                    {report.step_function_execution_arn ||
+                                        "Not available"}
+                                {/if}
+                            </code>
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Coverage batch job ID</span>
+                            <code class="debug-info-value txt-mono">
+                                {#if getBatchJobUrl(
+                                    report.coverage_batch_job_id,
+                                    report.step_function_execution_arn,
+                                )}
+                                    <a
+                                        class="debug-info-link link-primary txt-mono"
+                                        href={getBatchJobUrl(
+                                            report.coverage_batch_job_id,
+                                            report.step_function_execution_arn,
+                                        )}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        {report.coverage_batch_job_id}
+                                    </a>
+                                {:else}
+                                    {report.coverage_batch_job_id || "Not available"}
+                                {/if}
+                            </code>
+                        </div>
+                    </div>
+                    <div class="debug-info-section">
+                        <div class="debug-info-section-title">Base master run</div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Report ID</span>
+                            <code class="debug-info-value txt-mono"
+                                >{report.base_report?.id || "Not available"}</code
+                            >
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Commit</span>
+                            <code class="debug-info-value txt-mono"
+                                >{report.base_report?.commit ||
+                                    report.base_commit ||
+                                    "Not available"}</code
+                            >
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label"
+                                >Step Functions execution ARN</span
+                            >
+                            <code class="debug-info-value txt-mono">
+                                {#if getStepFunctionsExecutionUrl(
+                                    report.base_report?.step_function_execution_arn,
+                                )}
+                                    <a
+                                        class="debug-info-link link-primary txt-mono"
+                                        href={getStepFunctionsExecutionUrl(
+                                            report.base_report
+                                                ?.step_function_execution_arn,
+                                        )}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        {report.base_report
+                                            ?.step_function_execution_arn}
+                                    </a>
+                                {:else}
+                                    {report.base_report
+                                        ?.step_function_execution_arn ||
+                                        "Not available"}
+                                {/if}
+                            </code>
+                        </div>
+                        <div class="debug-info-row">
+                            <span class="debug-info-label">Coverage batch job ID</span>
+                            <code class="debug-info-value txt-mono">
+                                {#if getBatchJobUrl(
+                                    report.base_report?.coverage_batch_job_id,
+                                    report.base_report?.step_function_execution_arn,
+                                )}
+                                    <a
+                                        class="debug-info-link link-primary txt-mono"
+                                        href={getBatchJobUrl(
+                                            report.base_report
+                                                ?.coverage_batch_job_id,
+                                            report.base_report
+                                                ?.step_function_execution_arn,
+                                        )}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        {report.base_report?.coverage_batch_job_id}
+                                    </a>
+                                {:else}
+                                    {report.base_report?.coverage_batch_job_id ||
+                                        "Not available"}
+                                {/if}
+                            </code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {/if}
         <div class="clearfix m-b-base" />
     </main>
 </div>
@@ -210,6 +423,90 @@
         }
         .cov-col {
             width: 48%;
+        }
+    }
+
+    .report-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .report-meta-label {
+        font-weight: 600;
+    }
+
+    .report-meta-description {
+        color: #65717d;
+    }
+
+    .debug-info-footer {
+        margin-top: 1.5rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--baseAlt2Color);
+    }
+
+    .debug-info-toggle {
+        padding: 0;
+        border: 0;
+        background: none;
+        cursor: pointer;
+        text-decoration: underline;
+    }
+
+    .debug-info-panel {
+        margin-top: 0.75rem;
+        padding: 0.75rem 1rem;
+        background: var(--baseAlt1Color);
+        border: 1px solid var(--baseAlt2Color);
+    }
+
+    .debug-info-section + .debug-info-section {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--baseAlt2Color);
+    }
+
+    .debug-info-section-title {
+        margin-bottom: 0.75rem;
+        font-size: var(--smFontSize);
+        font-weight: 600;
+    }
+
+    .debug-info-row {
+        display: grid;
+        grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+        gap: 0.5rem 1rem;
+        align-items: start;
+    }
+
+    .debug-info-row + .debug-info-row {
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--baseAlt2Color);
+    }
+
+    .debug-info-label {
+        color: var(--txtHintColor);
+        font-size: var(--xsFontSize);
+    }
+
+    .debug-info-value {
+        display: block;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .debug-info-link {
+        white-space: pre-wrap;
+        word-break: break-word;
+        text-decoration: underline;
+    }
+
+    @media (max-width: 700px) {
+        .debug-info-row {
+            grid-template-columns: 1fr;
         }
     }
 </style>
