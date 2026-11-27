@@ -167,7 +167,7 @@
                 current = current[part];
             else return false;
         }
-        return true;
+        return typeof current === "string";
     }
 
     function renderTree(tree, path = "") {

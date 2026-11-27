@@ -510,7 +510,7 @@
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
                                 })}`
-                                : "",
+                                    : "",
                                 position: "left",
                             }}
                         >
